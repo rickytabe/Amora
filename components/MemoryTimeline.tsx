@@ -35,7 +35,7 @@ const MemoryTimeline: React.FC<MemoryTimelineProps> = ({ onNext, config, theme }
         className="text-center mb-32"
       >
         <h2 className={`${theme.font} text-4xl md:text-6xl text-white mb-6`}>
-          {config.MODE === 'ADMIRER' ? 'Uncovering a Secret Admirer ✨' : 'The Person After My Heart ❤️'}
+          {config.MODE === 'ADMIRER' ? 'This Pictures of you caught me' : 'The Person After My Heart'}
         </h2>
         <div className="w-24 h-1 bg-gradient-to-r from-pink-500 to-purple-500 mx-auto rounded-full"></div>
       </motion.div>
@@ -50,7 +50,9 @@ const MemoryTimeline: React.FC<MemoryTimelineProps> = ({ onNext, config, theme }
           viewport={{ once: true, margin: '-100px' }}
           className="mt-12 mb-20"
         >
-          <p className="text-center text-white/50 text-sm tracking-[0.25em] uppercase mb-10">Tap each card to reveal</p>
+          <p className="text-center text-white/50 text-sm tracking-[0.25em] uppercase mb-10">
+            {config.MODE === 'ADMIRER' ? 'Some Pics of You That Got Me' : 'Tap each card to reveal'}
+          </p>
 
           <div className="relative z-10 pl-6 md:pl-0">
             {uploadedImages.map((image: string, idx: number) => {
@@ -136,3 +138,4 @@ const MemoryTimeline: React.FC<MemoryTimelineProps> = ({ onNext, config, theme }
 };
 
 export default MemoryTimeline;
+

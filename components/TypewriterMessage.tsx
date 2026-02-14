@@ -23,7 +23,8 @@ const TypewriterMessage: React.FC<TypewriterMessageProps> = ({ onComplete, confi
     }
 
     const currentMsg = messages[index];
-    const fullText = currentMsg.isSpecial 
+    const shouldAppendRecipientName = currentMsg.isSpecial && config.MODE !== 'ADMIRER';
+    const fullText = shouldAppendRecipientName
       ? `${currentMsg.text}${config.LOVED_ONE_NAME}.`
       : currentMsg.text;
 
@@ -45,7 +46,7 @@ const TypewriterMessage: React.FC<TypewriterMessageProps> = ({ onComplete, confi
     }, 60);
 
     return () => clearInterval(timer);
-  }, [index, messages, config.LOVED_ONE_NAME]);
+  }, [index, messages, config.LOVED_ONE_NAME, config.MODE]);
 
   return (
     <div className="fixed inset-0 flex flex-col items-center justify-center p-8 bg-black/60 backdrop-blur-sm z-40">

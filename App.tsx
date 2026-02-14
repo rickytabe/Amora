@@ -28,6 +28,7 @@ const App: React.FC = () => {
   const [config, setConfig] = useState(DEFAULT_PERSONALIZATION);
   const [isRemoteLoading, setIsRemoteLoading] = useState(false);
   const [remoteError, setRemoteError] = useState('');
+  const [isConsumedLink, setIsConsumedLink] = useState(false);
   const [publishedSlug, setPublishedSlug] = useState<string | null>(null);
   const [editToken, setEditToken] = useState<string | null>(null);
 
@@ -39,6 +40,20 @@ const App: React.FC = () => {
       if (incomingSlug) {
         setStage(AppStage.LOCKED);
         setPublishedSlug(incomingSlug);
+        const consumedRaw = localStorage.getItem('amora_consumed_links');
+        if (consumedRaw) {
+          try {
+            const consumed = JSON.parse(consumedRaw);
+            if (consumed[incomingSlug]) {
+              setIsConsumedLink(true);
+              setRemoteError('');
+              setIsRemoteLoading(false);
+              return;
+            }
+          } catch {
+            // ignore malformed consumed-links store
+          }
+        }
         const tokenBySlugRaw = localStorage.getItem('valentine_edit_tokens');
         if (tokenBySlugRaw) {
           try {
@@ -174,6 +189,25 @@ const App: React.FC = () => {
     return true;
   };
 
+  const handleUpdatePublishedConfig = async (newConfig: any, slug: string, token: string) => {
+    const { data, error } = await supabase.rpc('update_surprise', {
+      p_slug: slug,
+      p_edit_token: token,
+      p_config: newConfig,
+      p_expires_at: null,
+      p_is_published: true,
+    });
+
+    if (error || data !== true) {
+      console.error('Template update error', error);
+      return false;
+    }
+
+    setConfig(newConfig);
+    localStorage.setItem('valentine_config', JSON.stringify(newConfig));
+    return true;
+  };
+
   const [showHidden, setShowHidden] = useState(false);
   const triggerHidden = () => {
     setShowHidden(true);
@@ -243,7 +277,18 @@ const App: React.FC = () => {
           <LandingPage key="landing" onGoToCreator={goToCreator} theme={theme} />
         )}
 
-        {stage === AppStage.LOCKED && (
+        {stage === AppStage.LOCKED && isConsumedLink && (
+          <motion.div
+            key="opened"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            className="fixed inset-0 z-40 flex items-center justify-center"
+          >
+            <p className={`${theme.font} text-5xl md:text-7xl text-white/85`}>Opened</p>
+          </motion.div>
+        )}
+
+        {stage === AppStage.LOCKED && !isConsumedLink && (
           <UnlockScreen key="unlock" onUnlock={handleUnlock} config={config} />
         )}
 
@@ -253,6 +298,7 @@ const App: React.FC = () => {
             onSaveDraft={handleSaveDraft}
             onPublish={handlePublishConfig}
             onUpdate={handleUpdateConfig}
+            onUpdatePublished={handleUpdatePublishedConfig}
             onCancel={goToLanding}
             currentConfig={config}
             publishedSlug={publishedSlug}

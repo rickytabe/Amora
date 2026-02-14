@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { motion } from 'framer-motion';
-import { Save, X, User, MessageCircle, Layout, Copy, Upload, RefreshCw, ImagePlus, Trash2 } from 'lucide-react';
-import { SurpriseMode, MUSIC_TRACKS, MODE_TEXT_DEFAULTS } from '../constants';
+import { Save, X, User, MessageCircle, Layout, Copy, Upload, RefreshCw, ImagePlus, Trash2, Plus } from 'lucide-react';
+import { SurpriseMode, MUSIC_TRACKS, MODE_TEXT_DEFAULTS, DEFAULT_PERSONALIZATION } from '../constants';
 import { supabase } from '../lib/supabase';
 import PhoneInput from 'react-phone-input-2';
 import 'react-phone-input-2/lib/style.css';
@@ -10,6 +10,7 @@ interface CreatorPanelProps {
   onSaveDraft: (config: any) => void;
   onPublish: (config: any) => Promise<{ slug: string; editToken: string } | null>;
   onUpdate: (config: any) => Promise<boolean>;
+  onUpdatePublished: (config: any, slug: string, token: string) => Promise<boolean>;
   onCancel: () => void;
   currentConfig: any;
   publishedSlug: string | null;
@@ -26,17 +27,32 @@ interface UploadPreview {
   note?: string;
 }
 
+interface StoredTemplate {
+  id: string;
+  name: string;
+  config: any;
+  updatedAt: number;
+  publishedSlug?: string;
+  editToken?: string;
+}
+
 const MAX_IMAGES = 5;
 const MAX_FILE_SIZE_BYTES = 5 * 1024 * 1024;
 const STORAGE_BUCKET = 'LoveBids_Pics';
 const UPLOAD_CONCURRENCY = 2;
 const UPLOAD_RETRIES = 3;
 const MAX_DIMENSION = 1920;
+const TEMPLATE_LIBRARY_KEY = 'amora_template_library_v1';
 
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const canvasToBlob = (canvas: HTMLCanvasElement, type: string, quality: number) =>
   new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, type, quality));
+
+const makeId = () => {
+  if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID();
+  return `tpl-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+};
 
 const optimizeImage = async (file: File): Promise<File | null> => {
   if (!file.type.startsWith('image/')) return null;
@@ -95,7 +111,7 @@ const optimizeImage = async (file: File): Promise<File | null> => {
 const CreatorPanel: React.FC<CreatorPanelProps> = ({
   onSaveDraft,
   onPublish,
-  onUpdate,
+  onUpdatePublished,
   onCancel,
   currentConfig,
   publishedSlug,
@@ -106,6 +122,20 @@ const CreatorPanel: React.FC<CreatorPanelProps> = ({
     UPLOADED_IMAGES: Array.isArray(cfg?.UPLOADED_IMAGES) ? cfg.UPLOADED_IMAGES : [],
   });
 
+  const createTemplate = (config: any, name: string, slug?: string, token?: string): StoredTemplate => ({
+    id: makeId(),
+    name,
+    config: normalizeConfig(config),
+    updatedAt: Date.now(),
+    publishedSlug: slug,
+    editToken: token,
+  });
+
+  const [initialized, setInitialized] = useState(false);
+  const [templates, setTemplates] = useState<StoredTemplate[]>([]);
+  const [activeTemplateId, setActiveTemplateId] = useState<string>('');
+  const [templateName, setTemplateName] = useState('My Template');
+
   const [form, setForm] = useState(normalizeConfig(currentConfig));
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
@@ -115,8 +145,34 @@ const CreatorPanel: React.FC<CreatorPanelProps> = ({
   const previewUrlsRef = useRef<string[]>([]);
 
   useEffect(() => {
-    setForm(normalizeConfig(currentConfig));
-  }, [currentConfig]);
+    if (initialized) return;
+
+    let loaded: StoredTemplate[] = [];
+    const raw = localStorage.getItem(TEMPLATE_LIBRARY_KEY);
+    if (raw) {
+      try {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) loaded = parsed;
+      } catch {
+        loaded = [];
+      }
+    }
+
+    if (loaded.length === 0) {
+      const seedName = currentConfig?.LOVED_ONE_NAME ? `${currentConfig.LOVED_ONE_NAME} Template` : 'My Template';
+      const seed = createTemplate(currentConfig, seedName, publishedSlug || undefined, undefined);
+      loaded = [seed];
+      localStorage.setItem(TEMPLATE_LIBRARY_KEY, JSON.stringify(loaded));
+    }
+
+    const first = loaded[0];
+    setTemplates(loaded);
+    setActiveTemplateId(first.id);
+    setTemplateName(first.name);
+    setForm(normalizeConfig(first.config));
+    onSaveDraft(first.config);
+    setInitialized(true);
+  }, [initialized, currentConfig, publishedSlug, onSaveDraft]);
 
   useEffect(() => {
     return () => {
@@ -125,16 +181,21 @@ const CreatorPanel: React.FC<CreatorPanelProps> = ({
     };
   }, []);
 
-  const shareUrl = useMemo(() => {
-    if (!publishedSlug) return '';
-    return `${window.location.origin}/s/${publishedSlug}`;
-  }, [publishedSlug]);
-
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    onSaveDraft(form);
-    setStatus('Draft saved locally.');
+  const persistTemplates = (next: StoredTemplate[]) => {
+    setTemplates(next);
+    localStorage.setItem(TEMPLATE_LIBRARY_KEY, JSON.stringify(next));
   };
+
+  const activeTemplate = useMemo(
+    () => templates.find((t) => t.id === activeTemplateId) || null,
+    [templates, activeTemplateId]
+  );
+
+  const shareUrl = useMemo(() => {
+    const slug = activeTemplate?.publishedSlug || publishedSlug;
+    if (!slug) return '';
+    return `${window.location.origin}/s/${slug}`;
+  }, [activeTemplate?.publishedSlug, publishedSlug]);
 
   const applyModeDefaults = (mode: SurpriseMode) => {
     const chosen = MODE_TEXT_DEFAULTS[mode];
@@ -160,6 +221,43 @@ const CreatorPanel: React.FC<CreatorPanelProps> = ({
     const newMsgs = [...form.TYPEWRITER_MESSAGES];
     newMsgs[idx].text = text;
     setForm({ ...form, TYPEWRITER_MESSAGES: newMsgs });
+  };
+
+  const saveCurrentTemplate = () => {
+    const name = templateName.trim() || 'Untitled Template';
+    if (!activeTemplateId) return;
+
+    const next = templates.map((template) =>
+      template.id === activeTemplateId
+        ? { ...template, name, config: normalizeConfig(form), updatedAt: Date.now() }
+        : template
+    );
+
+    persistTemplates(next);
+    onSaveDraft(form);
+    setStatus(`Saved "${name}".`);
+  };
+
+  const loadTemplate = (templateId: string) => {
+    const template = templates.find((t) => t.id === templateId);
+    if (!template) return;
+    setActiveTemplateId(template.id);
+    setTemplateName(template.name);
+    setForm(normalizeConfig(template.config));
+    onSaveDraft(template.config);
+    setStatus(`Loaded "${template.name}".`);
+  };
+
+  const createNewTemplate = () => {
+    const base = normalizeConfig(DEFAULT_PERSONALIZATION);
+    const newTemplate = createTemplate(base, `Template ${templates.length + 1}`);
+    const next = [newTemplate, ...templates];
+    persistTemplates(next);
+    setActiveTemplateId(newTemplate.id);
+    setTemplateName(newTemplate.name);
+    setForm(base);
+    onSaveDraft(base);
+    setStatus(`Created "${newTemplate.name}".`);
   };
 
   const getUploadSessionId = () => {
@@ -300,6 +398,7 @@ const CreatorPanel: React.FC<CreatorPanelProps> = ({
   };
 
   const handlePublish = async () => {
+    if (!activeTemplateId) return;
     setIsSubmitting(true);
     setStatus('Publishing...');
     try {
@@ -308,18 +407,40 @@ const CreatorPanel: React.FC<CreatorPanelProps> = ({
         setStatus('Publish failed. Check Supabase key/table/RPC setup.');
         return;
       }
-      setStatus(`Published successfully. Slug: ${result.slug}`);
+
+      const next = templates.map((template) =>
+        template.id === activeTemplateId
+          ? { ...template, config: normalizeConfig(form), publishedSlug: result.slug, editToken: result.editToken, updatedAt: Date.now() }
+          : template
+      );
+      persistTemplates(next);
+      onSaveDraft(form);
+      setStatus(`Published "${templateName || 'Template'}". Slug: ${result.slug}`);
     } finally {
       setIsSubmitting(false);
     }
   };
 
-  const handleUpdate = async () => {
+  const handleUpdateTemplate = async () => {
+    if (!activeTemplate || !activeTemplate.publishedSlug || !activeTemplate.editToken) {
+      setStatus('Update failed. This template has no published link yet.');
+      return;
+    }
+
     setIsSubmitting(true);
     setStatus('Updating...');
     try {
-      const ok = await onUpdate(form);
-      setStatus(ok ? 'Published link updated successfully.' : 'Update failed. Missing or invalid edit token.');
+      const ok = await onUpdatePublished(form, activeTemplate.publishedSlug, activeTemplate.editToken);
+      if (!ok) {
+        setStatus('Update failed. Invalid token or link not found.');
+        return;
+      }
+      const next = templates.map((template) =>
+        template.id === activeTemplate.id ? { ...template, config: normalizeConfig(form), updatedAt: Date.now() } : template
+      );
+      persistTemplates(next);
+      onSaveDraft(form);
+      setStatus('Published link updated successfully.');
     } finally {
       setIsSubmitting(false);
     }
@@ -347,17 +468,64 @@ const CreatorPanel: React.FC<CreatorPanelProps> = ({
         <div className="flex items-center justify-between mb-8">
           <div>
             <h2 className="text-3xl font-bold text-white">Creator Dashboard</h2>
-            <p className="text-white/40">Build your template, publish a link, then preview it in a separate tab</p>
+            <p className="text-white/40">Build templates, keep history, and publish separate links.</p>
           </div>
           <button onClick={onCancel} className="p-2 hover:bg-white/10 rounded-full transition-colors">
             <X className="text-white/60" />
           </button>
         </div>
 
-        <form onSubmit={handleSubmit} className="space-y-8">
+        <section className="space-y-4 mb-8">
+          <div className="flex items-center justify-between gap-3">
+            <h3 className="text-pink-400 font-semibold uppercase text-xs tracking-widest">Template Library</h3>
+            <button
+              type="button"
+              onClick={createNewTemplate}
+              className="px-3 py-2 rounded-lg bg-white/10 hover:bg-white/20 text-white text-xs flex items-center gap-2"
+            >
+              <Plus size={14} /> New Template
+            </button>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {templates.map((template) => (
+              <button
+                type="button"
+                key={template.id}
+                onClick={() => loadTemplate(template.id)}
+                className={`text-left p-4 rounded-xl border transition-all ${
+                  template.id === activeTemplateId
+                    ? 'border-pink-400/60 bg-pink-500/10'
+                    : 'border-white/10 bg-white/5 hover:bg-white/10'
+                }`}
+              >
+                <p className="text-white font-medium">{template.name}</p>
+                <p className="text-white/50 text-xs mt-1">Recipient: {template.config?.LOVED_ONE_NAME || 'Unknown'}</p>
+                <p className="text-white/35 text-[11px] mt-2">Edited: {new Date(template.updatedAt).toLocaleString()}</p>
+                {template.publishedSlug && <p className="text-emerald-300 text-[11px] mt-1">Published: /s/{template.publishedSlug}</p>}
+              </button>
+            ))}
+          </div>
+        </section>
+
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            saveCurrentTemplate();
+          }}
+          className="space-y-8"
+        >
           <section className="space-y-4">
             <h3 className="flex items-center gap-2 text-pink-400 font-semibold uppercase text-xs tracking-widest"><User size={14} /> Basic Info</h3>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <label className="text-sm text-white/60">Template Name</label>
+                <input
+                  type="text"
+                  value={templateName}
+                  onChange={(e) => setTemplateName(e.target.value)}
+                  className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white outline-none focus:border-pink-500"
+                />
+              </div>
               <div className="space-y-2">
                 <label className="text-sm text-white/60">Recipient Name</label>
                 <input
@@ -367,7 +535,7 @@ const CreatorPanel: React.FC<CreatorPanelProps> = ({
                   className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white outline-none focus:border-pink-500"
                 />
               </div>
-              <div className="space-y-2">
+              <div className="space-y-2 md:col-span-2">
                 <label className="text-sm text-white/60">Intro Title</label>
                 <input
                   type="text"
@@ -377,46 +545,45 @@ const CreatorPanel: React.FC<CreatorPanelProps> = ({
                 />
               </div>
             </div>
+
             {form.MODE === 'ADMIRER' && (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-1">
                 <div className="space-y-2">
-                  <label className="text-sm text-white/60">Your Phone Number (for accepted reply)</label>
-                  <div className="text-white">
-                    <PhoneInput
-                      country="cm"
-                      value={form.ADMIRER_PHONE || ''}
-                      onChange={(value: string) => setForm({ ...form, ADMIRER_PHONE: value ? `+${value}` : '' })}
-                      enableSearch
-                      inputStyle={{
-                        width: '100%',
-                        background: 'rgba(255,255,255,0.05)',
-                        border: '1px solid rgba(255,255,255,0.10)',
-                        color: '#fff',
-                        borderRadius: '0.75rem',
-                        height: '48px',
-                      }}
-                      buttonStyle={{
-                        background: 'rgba(255,255,255,0.05)',
-                        border: '1px solid rgba(255,255,255,0.10)',
-                        borderRight: '0',
-                        borderRadius: '0.75rem 0 0 0.75rem',
-                      }}
-                      dropdownStyle={{
-                        background: '#1e1b4b',
-                        color: '#fff',
-                        border: '1px solid rgba(255,255,255,0.15)',
-                      }}
-                      searchStyle={{
-                        background: 'rgba(255,255,255,0.08)',
-                        color: '#fff',
-                        border: '1px solid rgba(255,255,255,0.15)',
-                      }}
-                      containerStyle={{ width: '100%' }}
-                    />
-                  </div>
+                  <label className="text-sm text-white/60">Your Phone Number (for replies)</label>
+                  <PhoneInput
+                    country="cm"
+                    value={(form.ADMIRER_PHONE || '').replace(/^\+/, '')}
+                    onChange={(value: string) => setForm({ ...form, ADMIRER_PHONE: value ? `+${value}` : '' })}
+                    enableSearch
+                    inputStyle={{
+                      width: '100%',
+                      background: 'rgba(255,255,255,0.05)',
+                      border: '1px solid rgba(255,255,255,0.10)',
+                      color: '#fff',
+                      borderRadius: '0.75rem',
+                      height: '48px',
+                    }}
+                    buttonStyle={{
+                      background: 'rgba(255,255,255,0.05)',
+                      border: '1px solid rgba(255,255,255,0.10)',
+                      borderRight: '0',
+                      borderRadius: '0.75rem 0 0 0.75rem',
+                    }}
+                    dropdownStyle={{
+                      background: '#1e1b4b',
+                      color: '#fff',
+                      border: '1px solid rgba(255,255,255,0.15)',
+                    }}
+                    searchStyle={{
+                      background: 'rgba(255,255,255,0.08)',
+                      color: '#fff',
+                      border: '1px solid rgba(255,255,255,0.15)',
+                    }}
+                    containerStyle={{ width: '100%' }}
+                  />
                 </div>
                 <div className="space-y-2">
-                  <label className="text-sm text-white/60">Rejection Message (If they Reject You)</label>
+                  <label className="text-sm text-white/60">Rejection Message</label>
                   <input
                     type="text"
                     value={form.ADMIRER_REJECT_MESSAGE || ''}
@@ -435,17 +602,14 @@ const CreatorPanel: React.FC<CreatorPanelProps> = ({
                 <label className="text-sm text-white/60">Experience Mode</label>
                 <select
                   value={form.MODE}
-                  onChange={(e) => {
-                    const nextMode = e.target.value as SurpriseMode;
-                    applyModeDefaults(nextMode);
-                  }}
+                  onChange={(e) => applyModeDefaults(e.target.value as SurpriseMode)}
                   className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white outline-none focus:border-pink-500 appearance-none"
                   style={{ color: '#fff', backgroundColor: 'rgba(255, 255, 255, 0.05)' }}
                 >
-                  <option value="ROMANTIC" style={{ backgroundColor: '#1e1b4b', color: '#fff' }}>Romantic (Hearts & Reds)</option>
-                  <option value="ADMIRER" style={{ backgroundColor: '#1e1b4b', color: '#fff' }}>Secret Admirer (Mystery & Dark Indigo)</option>
-                  <option value="FRIENDLY" style={{ backgroundColor: '#1e1b4b', color: '#fff' }}>Friendship/Family (Warmth & Gold)</option>
-                  <option value="CLASSIC" style={{ backgroundColor: '#1e1b4b', color: '#fff' }}>Elegant/Formal (Professional & Teal)</option>
+                  <option value="ROMANTIC" style={{ backgroundColor: '#1e1b4b', color: '#fff' }}>Romantic</option>
+                  <option value="ADMIRER" style={{ backgroundColor: '#1e1b4b', color: '#fff' }}>Secret Admirer</option>
+                  <option value="FRIENDLY" style={{ backgroundColor: '#1e1b4b', color: '#fff' }}>Friendship / Family</option>
+                  <option value="CLASSIC" style={{ backgroundColor: '#1e1b4b', color: '#fff' }}>Classic</option>
                 </select>
               </div>
               <div className="space-y-2">
@@ -462,23 +626,6 @@ const CreatorPanel: React.FC<CreatorPanelProps> = ({
                 </select>
               </div>
             </div>
-            <div className="space-y-3 pt-2">
-              <p className="text-sm text-white/60">
-                Mode controls the default text style. Changing mode auto-loads that mode template.
-              </p>
-              <button
-                type="button"
-                onClick={() => applyModeDefaults(form.MODE as SurpriseMode)}
-                className="px-3 py-1.5 rounded-full bg-white/10 hover:bg-white/20 text-white/90 text-xs"
-              >
-                Re-apply current mode defaults
-              </button>
-              {form.MODE === 'ADMIRER' && (
-                <p className="text-xs text-indigo-200/80">
-                  Tip: for extra spark, ask a trusted friend to share the link instead of sending it directly yourself.
-                </p>
-              )}
-            </div>
           </section>
 
           <section className="space-y-4">
@@ -491,7 +638,6 @@ const CreatorPanel: React.FC<CreatorPanelProps> = ({
                     value={msg.text}
                     onChange={(e) => updateTypewriter(i, e.target.value)}
                     className="flex-1 bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white outline-none focus:border-pink-500 h-20 resize-none"
-                    placeholder={`Message ${i + 1}`}
                   />
                 </div>
               ))}
@@ -500,7 +646,7 @@ const CreatorPanel: React.FC<CreatorPanelProps> = ({
 
           <section className="space-y-3 bg-white/5 border border-white/10 rounded-2xl p-4">
             <h3 className="text-pink-400 font-semibold uppercase text-xs tracking-widest">Secret Photos</h3>
-            <p className="text-white/50 text-sm">Upload up to 5 photos, max 5MB each. They will be revealed mysteriously in the timeline.</p>
+            <p className="text-white/50 text-sm">Upload up to 5 photos, max 5MB each.</p>
             <div className="flex flex-col md:flex-row md:items-center gap-3">
               <label className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-white/10 hover:bg-white/20 text-white text-sm cursor-pointer">
                 <ImagePlus size={14} />
@@ -514,9 +660,7 @@ const CreatorPanel: React.FC<CreatorPanelProps> = ({
                   disabled={isUploading || (form.UPLOADED_IMAGES?.length || 0) >= MAX_IMAGES}
                 />
               </label>
-              <span className="text-xs text-white/50">
-                {(form.UPLOADED_IMAGES?.length || 0)}/{MAX_IMAGES} used
-              </span>
+              <span className="text-xs text-white/50">{(form.UPLOADED_IMAGES?.length || 0)}/{MAX_IMAGES} used</span>
             </div>
 
             {uploadPreviews.length > 0 && (
@@ -556,22 +700,14 @@ const CreatorPanel: React.FC<CreatorPanelProps> = ({
 
           <section className="space-y-3 bg-white/5 border border-white/10 rounded-2xl p-4">
             <h3 className="text-pink-400 font-semibold uppercase text-xs tracking-widest">Publish</h3>
-            <p className="text-white/50 text-sm">Publish generates a shareable URL. Save Draft keeps local preview only.</p>
+            <p className="text-white/50 text-sm">Publish creates or updates a link for the active template.</p>
             {shareUrl && (
               <div className="flex flex-col md:flex-row gap-3 md:items-center">
                 <code className="flex-1 bg-black/30 px-3 py-2 rounded-lg text-xs text-white/80 break-all">{shareUrl}</code>
-                <button
-                  type="button"
-                  onClick={copyLink}
-                  className="px-4 py-2 rounded-lg bg-white/10 hover:bg-white/20 text-white text-sm flex items-center gap-2"
-                >
+                <button type="button" onClick={copyLink} className="px-4 py-2 rounded-lg bg-white/10 hover:bg-white/20 text-white text-sm flex items-center gap-2">
                   <Copy size={14} /> Copy Link
                 </button>
-                <button
-                  type="button"
-                  onClick={openPreview}
-                  className="px-4 py-2 rounded-lg bg-emerald-600/80 hover:bg-emerald-500 text-white text-sm"
-                >
+                <button type="button" onClick={openPreview} className="px-4 py-2 rounded-lg bg-emerald-600/80 hover:bg-emerald-500 text-white text-sm">
                   Open Preview
                 </button>
               </div>
@@ -579,38 +715,21 @@ const CreatorPanel: React.FC<CreatorPanelProps> = ({
             {status && <p className="text-xs text-white/60">{status}</p>}
           </section>
 
-          <div className="flex justify-end gap-4 pt-4">
-            <button
-              type="button"
-              onClick={onCancel}
-              className="px-6 py-3 rounded-xl border border-white/10 text-white/60 hover:text-white hover:bg-white/5 transition-all"
-            >
-              Cancel
+          <div className="flex flex-wrap justify-end gap-4 pt-4">
+            <button type="button" onClick={onCancel} className="px-6 py-3 rounded-xl border border-white/10 text-white/60 hover:text-white hover:bg-white/5 transition-all">
+              Close
             </button>
-            <button
-              type="submit"
-              className="px-8 py-3 rounded-xl bg-pink-600 hover:bg-pink-500 text-white font-bold flex items-center gap-2 shadow-lg shadow-pink-900/40 transition-all hover:scale-105"
-            >
-              <Save size={18} /> Save Changes
+            <button type="submit" className="px-8 py-3 rounded-xl bg-pink-600 hover:bg-pink-500 text-white font-bold flex items-center gap-2 shadow-lg shadow-pink-900/40 transition-all hover:scale-105">
+              <Save size={18} /> Save Template
             </button>
-            <button
-              type="button"
-              disabled={isSubmitting}
-              onClick={handlePublish}
-              className="px-6 py-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-70 text-white font-bold flex items-center gap-2 transition-all"
-            >
+            <button type="button" disabled={isSubmitting} onClick={handlePublish} className="px-6 py-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-70 text-white font-bold flex items-center gap-2 transition-all">
               <Upload size={18} /> Publish Link
             </button>
-            {publishedSlug && hasEditToken && (
-              <button
-                type="button"
-                disabled={isSubmitting}
-                onClick={handleUpdate}
-                className="px-6 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-70 text-white font-bold flex items-center gap-2 transition-all"
-              >
+            {(activeTemplate?.publishedSlug && activeTemplate?.editToken) || (publishedSlug && hasEditToken) ? (
+              <button type="button" disabled={isSubmitting} onClick={handleUpdateTemplate} className="px-6 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-70 text-white font-bold flex items-center gap-2 transition-all">
                 <RefreshCw size={18} /> Update Link
               </button>
-            )}
+            ) : null}
           </div>
         </form>
       </div>

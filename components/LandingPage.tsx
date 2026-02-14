@@ -26,12 +26,13 @@ const LandingPage: React.FC<LandingPageProps> = ({ onGoToCreator, theme }) => {
             transition={{ repeat: Infinity, duration: 4 }}
             className="text-pink-500/50 text-sm tracking-[0.45em] uppercase font-semibold"
           >
-            Let the link speak for you.
+            Passion. Secret Admirer. Love Vibe.
           </motion.div>
 
           <h1 className={`${theme.font} text-4xl md:text-7xl text-white leading-tight font-light`}>
-            Say It With Your <br />
-            <span className="italic font-normal">Heart.</span>
+            Amora lets the <br />
+            <span className="italic font-normal">Heart Speak.</span><br />
+            Without Saying a Word.
           </h1>
 
           <p className="text-white/50 text-base md:text-lg max-w-2xl mx-auto leading-relaxed font-light">

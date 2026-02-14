@@ -65,13 +65,13 @@ export const MODE_TEXT_DEFAULTS: Record<SurpriseMode, ModeTextDefaults> = {
       { text: 'You may not know who I am yet...', pause: 1200 },
       { text: 'But your smile has been my quiet favorite moment.', pause: 1400 },
       { text: 'So I left these little clues for you to uncover.', pause: 1400 },
-      { text: 'From your secret admirer, ', isSpecial: true, pause: 1800 },
+      { text: 'From your secret admirer.', pause: 1800 },
     ],
-    finalQuestion: 'Would you like to know me better?',
-    successMessage: 'Your answer just made my day brighter ?',
+    finalQuestion: 'If you feel this too, text me and I will reveal myself.',
+    successMessage: 'Thank you. Your message means a lot to me.',
     hiddenMessage: 'Psst... this was sent with a little courage.',
     admirerPhone: '',
-    admirerAcceptTemplate: 'Hi... I got your surprise link. I would like to know you better.',
+    admirerAcceptTemplate: "I'm in. Text me, I want to know you better.",
     admirerRejectMessage: 'It hurts, but thank you for being honest. ??',
   },
   FRIENDLY: {
@@ -122,7 +122,7 @@ export const MODE_TEXT_DEFAULTS: Record<SurpriseMode, ModeTextDefaults> = {
 };
 
 export const DEFAULT_PERSONALIZATION = {
-  LOVED_ONE_NAME: 'Valentine',
+  LOVED_ONE_NAME: 'Someone Special',
   MODE: 'ROMANTIC' as SurpriseMode,
   INTRO_TITLE: 'This page was made for someone special...',
   MUSIC_TRACK: 'snooze',
@@ -138,6 +138,6 @@ export const DEFAULT_PERSONALIZATION = {
   SUCCESS_MESSAGE: 'You just made me the happiest person alive ??',
   HIDDEN_MESSAGE: 'You found the hidden message. I love you even more.',
   ADMIRER_PHONE: '',
-  ADMIRER_ACCEPT_TEMPLATE: 'Hi... I got your surprise link. I would like to know you better.',
+  ADMIRER_ACCEPT_TEMPLATE: "I'm in. Text me, I want to know you better.",
   ADMIRER_REJECT_MESSAGE: 'It hurts, but thank you for being honest. ??',
 };

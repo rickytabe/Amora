@@ -43,7 +43,7 @@ const UnlockScreen: React.FC<UnlockScreenProps> = ({ onUnlock, config }) => {
         </div>
 
         <h1 className={`${theme.font} text-3xl md:text-4xl mb-2 text-white/90`}>
-          Hello there.
+          Hello {config.LOVED_ONE_NAME}!
         </h1>
         <p className="text-white/60 mb-8 font-light tracking-wide">
           {config.INTRO_TITLE}

@@ -1,19 +1,24 @@
 import React, { useState, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import confetti from 'canvas-confetti';
+import { supabase } from '../lib/supabase';
 
 interface SurpriseSectionProps {
   config: any;
   theme: any;
 }
 
+const NO_DODGE_ATTEMPTS = 10;
+
 const SurpriseSection: React.FC<SurpriseSectionProps> = ({ config, theme }) => {
   const [isOpened, setIsOpened] = useState(false);
   const [responded, setResponded] = useState(false);
   const [showRejectedMessage, setShowRejectedMessage] = useState(false);
+  const [hasRejected, setHasRejected] = useState(false);
   const [noButtonPos, setNoButtonPos] = useState({ x: 0, y: 0 });
+  const [noAttempts, setNoAttempts] = useState(0);
 
-  const isAdmirerMode = config.MODE === 'ADMIRER';
+  const noIsUnlocked = noAttempts >= NO_DODGE_ATTEMPTS;
 
   const handleOpen = () => {
     setIsOpened(true);
@@ -25,19 +30,45 @@ const SurpriseSection: React.FC<SurpriseSectionProps> = ({ config, theme }) => {
     });
   };
 
+  const sendWhatsAppFeedback = (accepted: boolean) => {
+    const rawPhone = String(config.ADMIRER_PHONE || '').trim();
+    const phone = rawPhone.replace(/\D/g, '');
+    if (!phone) return;
+
+    const acceptText = config.ADMIRER_ACCEPT_TEMPLATE || "I'm in. Text me, I want to know you better.";
+    const rejectText = config.ADMIRER_REJECT_MESSAGE || 'I am sorry. I do not feel the same.';
+    const fallbackAccept = 'I accept your proposal.';
+    const fallbackReject = 'I do not accept your proposal.';
+
+    const message = accepted
+      ? (acceptText || fallbackAccept)
+      : (rejectText || fallbackReject);
+
+    const url = `https://wa.me/${phone}?text=${encodeURIComponent(message)}`;
+    window.open(url, '_blank', 'noopener,noreferrer');
+  };
+
+  const expireCurrentLink = async () => {
+    const match = window.location.pathname.match(/^\/s\/([a-z0-9_-]{6,64})\/?$/i);
+    const slug = match?.[1];
+    if (!slug) return;
+
+    const key = 'amora_consumed_links';
+    const consumedRaw = localStorage.getItem(key);
+    const consumed = consumedRaw ? JSON.parse(consumedRaw) : {};
+    consumed[slug] = { consumedAt: Date.now() };
+    localStorage.setItem(key, JSON.stringify(consumed));
+
+    try {
+      await supabase.rpc('consume_surprise', { p_slug: slug });
+    } catch {
+      // Optional server expiry hook; local expiry still applies.
+    }
+  };
+
   const handleResponse = () => {
     setResponded(true);
-
-    if (isAdmirerMode) {
-      const phoneRaw = String(config.ADMIRER_PHONE || '').trim();
-      const phone = phoneRaw.replace(/[^\d+]/g, '');
-      const body = encodeURIComponent(
-        config.ADMIRER_ACCEPT_TEMPLATE || "I'm in. I'd like to know you better."
-      );
-      if (phone) {
-        window.location.href = `sms:${phone}?body=${body}`;
-      }
-    }
+    expireCurrentLink();
 
     const end = Date.now() + 5 * 1000;
     const colors = ['#ff4d6d', '#ffffff'];
@@ -63,7 +94,7 @@ const SurpriseSection: React.FC<SurpriseSectionProps> = ({ config, theme }) => {
 
   const moveNoButton = useCallback(() => {
     const x = (Math.random() - 0.5) * 400;
-    const y = (Math.random() - 0.5) * 400;
+    const y = (Math.random() - 0.5) * 350;
     setNoButtonPos({ x, y });
   }, []);
 
@@ -85,9 +116,26 @@ const SurpriseSection: React.FC<SurpriseSectionProps> = ({ config, theme }) => {
     osc.stop(ctx.currentTime + 0.95);
   };
 
+  const handleNoProbe = () => {
+    if (noIsUnlocked) return;
+    setNoAttempts((prev) => {
+      const next = prev + 1;
+      return next;
+    });
+    moveNoButton();
+  };
+
   const handleReject = () => {
+    if (!noIsUnlocked) {
+      handleNoProbe();
+      return;
+    }
+
     playSadTone();
+    setHasRejected(true);
     setShowRejectedMessage(true);
+    sendWhatsAppFeedback(false);
+    expireCurrentLink();
     setTimeout(() => setShowRejectedMessage(false), 3500);
   };
 
@@ -108,7 +156,7 @@ const SurpriseSection: React.FC<SurpriseSectionProps> = ({ config, theme }) => {
               transition={{ repeat: Infinity, duration: 4 }}
               className="text-[120px] md:text-[200px] drop-shadow-[0_0_50px_rgba(255,255,255,0.2)] transition-transform group-hover:scale-110"
             >
-              ??
+              🎁
             </motion.div>
             <p className="mt-8 text-white/60 tracking-[0.5em] uppercase text-sm animate-pulse">Open the gift</p>
           </motion.div>
@@ -123,35 +171,44 @@ const SurpriseSection: React.FC<SurpriseSectionProps> = ({ config, theme }) => {
               {config.FINAL_QUESTION}
             </h2>
             <div className="flex flex-col md:flex-row items-center justify-center gap-6 min-h-[100px]">
-              <motion.button
-                onClick={handleResponse}
-                whileHover={{ scale: 1.1 }}
-                whileTap={{ scale: 0.9 }}
-                className="w-full md:w-auto px-16 py-6 bg-gradient-to-r from-pink-500 to-rose-600 text-white rounded-full font-bold text-xl shadow-[0_0_40px_rgba(236,72,153,0.5)] z-10"
-              >
-                {isAdmirerMode ? `Yes, text me ${theme.icon}` : `YES! ${theme.icon}`}
-              </motion.button>
-
-              {isAdmirerMode ? (
+              {!hasRejected && (
                 <motion.button
-                  onClick={handleReject}
-                  whileHover={{ scale: 1.03 }}
-                  whileTap={{ scale: 0.97 }}
-                  className="w-full md:w-auto px-16 py-6 bg-white/5 backdrop-blur-md border border-white/10 text-white/70 rounded-full font-medium text-xl shadow-xl hover:text-white transition-colors"
+                  onClick={handleResponse}
+                  whileHover={{ scale: 1.1 }}
+                  whileTap={{ scale: 0.9 }}
+                  className="w-full md:w-auto px-16 py-6 bg-gradient-to-r from-pink-500 to-rose-600 text-white rounded-full font-bold text-xl shadow-[0_0_40px_rgba(236,72,153,0.5)] z-10"
                 >
-                  No, sorry ??
-                </motion.button>
-              ) : (
-                <motion.button
-                  onMouseEnter={moveNoButton}
-                  animate={{ x: noButtonPos.x, y: noButtonPos.y, opacity: 1 }}
-                  transition={{ type: 'spring', stiffness: 300, damping: 20 }}
-                  className="w-full md:w-auto px-16 py-6 bg-white/5 backdrop-blur-md border border-white/10 text-white/60 rounded-full font-medium text-xl shadow-xl hover:text-white transition-colors"
-                >
-                  Sorry, I can't... ??
+                  Yes {theme.icon}
                 </motion.button>
               )}
+
+              <motion.button
+                onMouseEnter={handleNoProbe}
+                onTouchStart={handleNoProbe}
+                onClick={handleReject}
+                animate={{
+                  x: noIsUnlocked ? 0 : noButtonPos.x,
+                  y: noIsUnlocked ? 0 : noButtonPos.y,
+                  opacity: 1,
+                  rotate: noIsUnlocked ? [0, -2, 2, -2, 0] : 0,
+                }}
+                transition={{
+                  type: 'spring',
+                  stiffness: 300,
+                  damping: 20,
+                  rotate: { repeat: noIsUnlocked ? Infinity : 0, duration: 1.1 },
+                }}
+                className="w-full md:w-auto px-16 py-6 bg-white/5 backdrop-blur-md border border-white/10 text-white/70 rounded-full font-medium text-xl shadow-xl hover:text-white transition-colors"
+              >
+                {noIsUnlocked ? "No... I'm crying, but click me :(" : 'No'}
+              </motion.button>
             </div>
+
+            {!noIsUnlocked && (
+              <p className="mt-4 text-white/45 text-xs uppercase tracking-widest">
+                Trying to click No: {noAttempts}/{NO_DODGE_ATTEMPTS}
+              </p>
+            )}
 
             <AnimatePresence>
               {showRejectedMessage && (
@@ -161,7 +218,7 @@ const SurpriseSection: React.FC<SurpriseSectionProps> = ({ config, theme }) => {
                   exit={{ opacity: 0, y: -10 }}
                   className="mt-8 mx-auto max-w-xl rounded-2xl border border-white/15 bg-black/40 backdrop-blur-md p-4 text-white/85 text-sm"
                 >
-                  {config.ADMIRER_REJECT_MESSAGE || 'It hurts, but thank you for being honest. ??'}
+                  {config.ADMIRER_REJECT_MESSAGE || 'It hurts, but thank you for being honest. :('}
                 </motion.div>
               )}
             </AnimatePresence>
@@ -186,6 +243,12 @@ const SurpriseSection: React.FC<SurpriseSectionProps> = ({ config, theme }) => {
             <h2 className={`${theme.font} text-4xl md:text-7xl text-white max-w-3xl leading-tight`}>
               {config.SUCCESS_MESSAGE}
             </h2>
+            <button
+              onClick={() => sendWhatsAppFeedback(true)}
+              className="mt-8 px-8 py-3 rounded-full bg-emerald-600/90 hover:bg-emerald-500 text-white font-semibold tracking-wide transition-colors"
+            >
+              Send Text Message
+            </button>
             <p className="mt-8 text-white/40 italic tracking-widest uppercase text-xs">A moment to remember forever</p>
           </motion.div>
         )}
